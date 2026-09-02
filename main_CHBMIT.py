@@ -920,7 +920,6 @@ def main():
     N_EPOCHS = 800
     N_SUBJECTS = 7
     new_i = 6
-    add_idx = []
     target_subject_name = f"subject_{new_i + 1:02d}"
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -932,7 +931,7 @@ def main():
     logger.info(f'Result directory: {result_dir}')
     logger.info(f'使用的backbone: {backbone_name}')
     logger.info(f'Dataset: {dataset}')
-    logger.info(f'N_SUBJECTS={N_SUBJECTS}, target/new domain={target_subject_name}, add_idx={add_idx}')
+    logger.info(f'N_SUBJECTS={N_SUBJECTS}, target/new domain={target_subject_name}')
 
     cur_means = []
     cur_stds = []
@@ -1071,13 +1070,12 @@ def main():
                 else:
                     d_max = max(sum_gradients)
 
-                if (i == new_i) or (i in add_idx):
+                if (i == new_i):
                     first_step_trace.append({
                         'circle_index': int(circle_index),
                         'cluster_index': int(cluster_index),
                         'subject': f'subject_{i+1:02d}',
                         'skipped': True,
-                        'reason': 'target_or_add_idx'
                     })
                     continue
 
@@ -1266,7 +1264,6 @@ def main():
             'target_subject': target_subject_name,
             'source_subjects': [f'subject_{i+1:02d}' for i in range(N_SUBJECTS) if i != new_i],
             'new_i': int(new_i),
-            'add_idx': [int(x) for x in add_idx],
             'n_clusters': int(n_clusters),
             'source_subject_results': source_subject_results,
             'cluster_labels': to_builtin(cluster_labels),

@@ -580,7 +580,6 @@ def main():
     few_shot_scale = 0.3
     logger.info(f'few shot scale:{few_shot_scale}')
     logger.info(f'new domain index: {new_i}')
-    add_idx = [0,2]
     exp_time = arrow.now().format('YYYYMMDDHHmmss')
     logger.info(f"\n{'='*60}")
     logger.info(f"  Model: {exp_model}  |  city_num: {city_num}  |  in_dim: {in_dim}")

@@ -255,7 +255,6 @@ if __name__ == "__main__":
         first_stage_num_epochs = 10
         num_new_loader_epochs = 100
         n_clusters = 2
-        add_idx = [ (1,0), (0,2), (1,2)]
         # ========================== 取出最后一个 new_domain 用于最终训练/测试 ==========================
         new_train_loader = train_loaders[new_i][new_j]  # 留出最后一个数据集作为new_domain
         new_val_loader = val_loaders[new_i][new_j]
@@ -469,10 +468,10 @@ if __name__ == "__main__":
                             sorted_sum_gradients.append(sum_gradients[i][j])
                             sorted_cat_gradients.append(cat_gradients[i][j])
                             if cross_source:
-                                if i == new_i or i not in train_source_idx_set or (i,j) in add_idx:
+                                if i == new_i or i not in train_source_idx_set:
                                     continue
                             if cross_temporal:
-                                if j == new_j or (i,j) in add_idx:
+                                if j == new_j:
                                     continue
                             logger.info(f'task {j} for {task_dirs[i]} start training...')
                             train_loader = train_loaders[i][j]
