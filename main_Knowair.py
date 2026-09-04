@@ -1,4 +1,4 @@
-
+﻿
 
 import os, sys
 proj_dir = os.path.dirname(os.path.abspath(__file__))
@@ -126,7 +126,6 @@ def init_history_dict():
         'frozen_layers_history': [],
         'rl_action_history': [],
         'activate_freq_history': [],
-        # 【新增】可视化相关元数据
         'visualization_saved': False,
         'domain_info': {}
     }
@@ -257,11 +256,11 @@ args, logger, now = get_config()
 channel_num = len(train_loaders)
 
 if not os.path.exists(STATION_COORDS_FILE):
-    logger.info("首次运行，正在提取并保存站点坐标...")
+    logger.info("First run: extracting and saving station coordinates...")
     save_station_coords(graph, STATION_COORDS_FILE)
-    logger.info(f"✅ 站点坐标已保存到: {STATION_COORDS_FILE}")
+    logger.info(f"Station coordinates saved to: {STATION_COORDS_FILE}")
 else:
-    logger.info(f"✅ 站点坐标文件已存在: {STATION_COORDS_FILE}")
+    logger.info(f"Station coordinate file already exists: {STATION_COORDS_FILE}")
 
 sample_pm25, sample_feat, _ = next(iter(train_loaders[0][0]))
 in_dim = 6 # 1+4+1
@@ -271,7 +270,9 @@ logger.info(f"in_dim={in_dim}  (feat_dim={sample_feat.shape[-1]}, "
 criterion = nn.MSELoss()
 def get_metric(predict_epoch, label_epoch):
     """
-    predict_epoch / label_epoch : (N, seq_len, 1, 1)  — 单城市 4D
+    predict_epoch / label_epoch : (N, seq_len, 1, 1)
+    MAPE is computed as a weighted percentage variant:
+    sum(abs(pred - label)) / sum(abs(label)) * 100.
     """
     haze_threshold = 75
     predict_haze = predict_epoch >= haze_threshold
@@ -285,12 +286,13 @@ def get_metric(predict_epoch, label_epoch):
     pod = hit / (hit + miss) if (hit + miss) else 0
     far = falsealarm / (hit + falsealarm) if (hit + falsealarm) else 0
 
-    # (N, seq_len, 1, 1) → [:,:,:,0] → (N, seq_len, 1) → transpose → (N, 1, seq_len) → reshape → (N, seq_len)
     predict = predict_epoch[:, :, :, 0].transpose((0, 2, 1)).reshape(-1, predict_epoch.shape[1])
-    label   = label_epoch[:, :, :, 0].transpose((0, 2, 1)).reshape(-1, label_epoch.shape[1])
-    mae  = np.mean(np.mean(np.abs(predict - label), axis=1))
-    mape  = np.mean(np.mean(np.abs((predict - label) / (label + 1e-8)), axis=1)) * 100
+    label = label_epoch[:, :, :, 0].transpose((0, 2, 1)).reshape(-1, label_epoch.shape[1])
+    abs_error = np.abs(predict - label)
+    mae = np.mean(np.mean(abs_error, axis=1))
     rmse = np.mean(np.sqrt(np.mean(np.square(predict - label), axis=1)))
+    label_sum = np.sum(np.abs(label))
+    mape = np.sum(abs_error) / label_sum * 100 if label_sum > 0 else np.nan
     return rmse, mae, mape, csi, pod, far
 
 def _patch_pm25_gnn(model):
@@ -402,10 +404,10 @@ def train_model_RL(model, train_loader, val_loader, test_loader, model_name, log
         if not new_domain:
             logger.info(f'activate freq:{activate_freq}')
             if activate_freq > big_threshold:
-                logger.info('高激活频率，LTP')
+                logger.info('High activation frequency, LTP')
                 scale *= 0.9
             elif activate_freq < small_threshold:
-                logger.info('低激活频率，LTD')
+                logger.info('Low activation frequency, LTD')
                 scale /= 0.9
         logger.info(f'freeze scale:{scale}')
         sorted_layers = sorted(H_matrix.items(), key=lambda item: item[1])
@@ -422,10 +424,10 @@ def train_model_RL(model, train_loader, val_loader, test_loader, model_name, log
                 param.requires_grad = True
         total_freq = 0
         batch_num = 0
-        for pm25, feature, _ in train_loader:  # 正常训练
+        for pm25, feature, _ in train_loader:  # normal training
             optimizer.zero_grad()
-            pm25    = pm25.to(device)    # (B, seq_len, 1) → (B, seq_len, 1, 1)
-            feature = feature.to(device) # (B, seq_len, D) → (B, seq_len, 1, D)
+            pm25    = pm25.to(device)    # (B, seq_len, 1) -> (B, seq_len, 1, 1)
+            feature = feature.to(device) # (B, seq_len, D) -> (B, seq_len, 1, D)
             batch_num += 1
             pred, activate_freq = model(pm25[:, :hist_len], feature)
             total_freq += activate_freq
@@ -443,7 +445,7 @@ def train_model_RL(model, train_loader, val_loader, test_loader, model_name, log
         record_layer_changes(history, model, prev_params, updates)
         for name, update_val in updates.items():
             if name not in layers_to_freeze:
-                H_matrix[name] = 0.9 * H_matrix[name] + 0.1 * update_val # 平滑更新
+                H_matrix[name] = 0.9 * H_matrix[name] + 0.1 * update_val # smooth update
         record_rl_state(
             history=history,
             epoch=epoch,
@@ -461,8 +463,8 @@ def train_model_RL(model, train_loader, val_loader, test_loader, model_name, log
                 param.requires_grad = True
             for pm25, feature, _ in train_loader:
                 optimizer.zero_grad()
-                pm25    = pm25.to(device)    # (B, seq_len, 1) → (B, seq_len, 1, 1)
-                feature = feature.to(device) # (B, seq_len, D) → (B, seq_len, 1, D)
+                pm25    = pm25.to(device)    # (B, seq_len, 1) -> (B, seq_len, 1, 1)
+                feature = feature.to(device) # (B, seq_len, D) -> (B, seq_len, 1, D)
 
                 pred, _ = model(pm25[:, :hist_len], feature)
                 loss = criterion(pred, pm25[:, hist_len:])
@@ -493,7 +495,7 @@ def train_model_RL(model, train_loader, val_loader, test_loader, model_name, log
 
         if cnt >= early_stop:
             logger.info(f"  metero {i:3d}, month {j}"
-                    f"→ Early stop at epoch {epoch+1}")
+                    f"-> Early stop at epoch {epoch+1}")
             break
         
     rmse, mae, mape, csi, pod, far = get_metric(best_p, best_l)
@@ -510,7 +512,7 @@ def train_model_RL(model, train_loader, val_loader, test_loader, model_name, log
         np.save(os.path.join(d, 'predict.npy'), best_p)
         np.save(os.path.join(d, 'label.npy'),   best_l)
         np.save(os.path.join(d, 'time.npy'),    best_t)
-        logger.info(f"      Saved → {d}")
+        logger.info(f"      Saved -> {d}")
 
         vis_dir = os.path.join(d, 'kepler_vis')
         os.makedirs(vis_dir, exist_ok=True)
@@ -525,7 +527,7 @@ def train_model_RL(model, train_loader, val_loader, test_loader, model_name, log
             'domain_name': f'meteo{i}_month{j}'
         }
         save_json(norm_params, os.path.join(vis_dir, 'norm_params.json'))
-        logger.info(f" 可视化参数已保存 → {vis_dir}")
+        logger.info(f"Visualization parameters saved -> {vis_dir}")
     return rmse, mae, mape, csi, pod, far, model, history
 def train_one_city(loader, model, optimizer, epochs):
 
@@ -557,7 +559,7 @@ def test_one_city(loader, model):
             hist = pm25[:, :hist_len]                 # (B, hist_len, 1, 1)
             pred, _ = model(hist, feature)                # (B, pred_len, 1, 1)
 
-            # 反归一化
+            # denormalize
             pred_val = np.concatenate(
                 [hist.cpu().numpy(), pred.cpu().numpy()], axis=1
             ) * pm25_std + pm25_mean                   # (B, seq_len, 1, 1)
@@ -587,7 +589,7 @@ def main():
     logger.info(f"{'='*60}\n")
     result_dir = make_result_dir(dataset, exp_model, now)
     logger.info(f'Result directory: {result_dir}')
-    logger.info(f'使用的backbone: {exp_model}')
+    logger.info(f'Backbone: {exp_model}')
     n_clusters = 2
     for i in range(channel_num):
         for j in range(11):
@@ -603,7 +605,7 @@ def main():
     all_test_rmse = []
     all_domain_results = []
     for exp_idx in range(exp_repeat):
-        logger.info(f"\n{'='*60}  Experiment {exp_idx+1}/{exp_repeat}  {'='*60}")
+        logger.info(f"=================== Experiment {exp_idx+1}/{exp_repeat} results ===================")
         sum_gradients = []
         cat_gradients = []
         for i in range(channel_num):
@@ -642,12 +644,12 @@ def main():
 
                     if cnt >= early_stop:
                         logger.info(f"  metero {i:3d}, month {j}: {metero_use[i]:10s}  "
-                            f"→ Early stop at epoch {epoch+1}")
+                            f"-> Early stop at epoch {epoch+1}")
                         break
                     
                 rmse, mae, mape, csi, pod, far = get_metric(best_p, best_l)
                 logger.info(f"\n  >>> metero {i:3d}, month {j}: {metero_use[i]:10s}  "
-                    f"RMSE={rmse:.4f}  MAE={mae:.4f}  MAPE={mape:.4f} "
+            f"RMSE={rmse:.4f}  MAE={mae:.4f}  MAPE={mape:.4f} "
                     f"CSI={csi:.4f}  POD={pod:.4f}  FAR={far:.4f}")
                 sum_gradient, cat_gradient = compute_gradient_air(model, val_loader, device, criterion, hist_len) 
                 logger.info(f"sum gradient: {sum_gradient}, cat_grad_len: {len(cat_gradient)}")
@@ -662,7 +664,7 @@ def main():
                     np.save(os.path.join(d, 'predict.npy'), best_p)
                     np.save(os.path.join(d, 'label.npy'),   best_l)
                     np.save(os.path.join(d, 'time.npy'),    best_t)
-                    logger.info(f"      Saved → {d}")
+                    logger.info(f"      Saved -> {d}")
                     all_domain_results.append({
                         'domain': (i, j),
                         'result_dir': d
@@ -681,7 +683,7 @@ def main():
         sorted_cat_gradients = []
         for circle_index in range(1):
             for cluster_index in sorted_clusters_gradients_list:
-                cluster = cluster_members[cluster_index]  # cluster中含有domain
+                cluster = cluster_members[cluster_index]  # domains in this cluster
                 temp_gradients_list = []
                 for i in range(len(cluster)):
                     temp_gradients_list.append(sum_gradients[cluster[i][0]][cluster[i][1]])
@@ -730,7 +732,7 @@ def main():
         common_model.p = p0 
         for circle_index in range(num_circles):
             for cluster_index in sorted_clusters_gradients_list:
-                cluster = cluster_members[cluster_index]  # cluster中含有domain
+                cluster = cluster_members[cluster_index]  # domains in this cluster
                 temp_gradients_list = []
                 for i in range(len(cluster)):
                     temp_gradients_list.append(sum_gradients[cluster[i][0]][cluster[i][1]])
@@ -782,7 +784,7 @@ def main():
             history=history,
             logger=logger
         )
-        logger.info(f'===================第{exp_idx+1}/{exp_repeat}次实验结果为==================================')
+        logger.info(f"=================== Experiment {exp_idx+1}/{exp_repeat} results ===================")
         logger.info(f'RMSE: {rmse}, MAE: {mae}, MAPE: {mape}')
         for i in range(len(train_loaders)):
             for j in range(len(train_loaders[0])):
@@ -790,18 +792,18 @@ def main():
                 train_loader = train_loaders[i][j]
                 val_loader = val_loaders[i][j]
                 test_loader = test_loaders[i][j]
-                logger.info(f'======================== 在 domain [{i},{j}] 上验证 ========================')
+                logger.info(f'======================== Validate on domain [{i},{j}] ========================')
                 rmse, mae, mape, csi, pod, far = test_model(test_loader=test_loader, model=common_model)
                 logger.info(f'RMSE: {rmse}, MAE: {mae}, MAPE: {mape}')
     mean_rmse = sum(all_test_rmse) / len(all_test_rmse)
     mean_mae = sum(all_test_mae) / len(all_test_mae)
     mean_mape = sum(all_test_mape) / len(all_test_mape)
-    logger.info(f"RMSE : {all_test_rmse}, 平均值: {round(mean_rmse, 5)}")
-    logger.info(f"MAE : {all_test_mae}, 平均值: {round(mean_mae, 5)}")
-    logger.info(f"MAPE : {all_test_mape}, 平均值: {round(mean_mape, 5)}")
+    logger.info(f"RMSE : {all_test_rmse}, mean: {round(mean_rmse, 5)}")
+    logger.info(f"MAE : {all_test_mae}, mean: {round(mean_mae, 5)}")
+    logger.info(f"MAPE : {all_test_mape}, mean: {round(mean_mape, 5)}")
     if save_npy and len(all_domain_results) > 0:
         logger.info("\n" + "="*60)
-        logger.info("开始生成 Kepler.gl 可视化地图...")
+        logger.info("Start generating Kepler.gl visualization maps...")
         logger.info("="*60)
         
         new_domain_dir = os.path.join(
@@ -809,7 +811,7 @@ def main():
             f'{exp_model}_dataset{dataset_num}_metero{new_i}_month{new_j}_{now}'
         )
         if os.path.exists(new_domain_dir):
-            logger.info(f"正在为新 Domain [{new_i}, {new_j}] 生成可视化...")
+            logger.info(f"Generating visualization for new domain [{new_i}, {new_j}]...")
             try:
                 map_obj = visualize_predictions_kepler(
                     result_dir=new_domain_dir,
@@ -823,16 +825,16 @@ def main():
                     save_csv=True
                 )
                 if map_obj is not None:
-                    logger.info(f"✅ 新 Domain 可视化地图已生成")
+                    logger.info("New domain visualization map generated")
                 else:
-                    logger.warning(f"⚠️ 新 Domain 可视化地图生成失败")
+                    logger.warning("New domain visualization map generation failed")
             except Exception as e:
-                logger.error(f"❌ 新 Domain 可视化生成出错: {e}")
+                logger.error(f"New domain visualization failed: {e}")
 
         if len(all_domain_results) >= 3:
-            logger.info(f"正在生成多 Domain 对比可视化（共 {len(all_domain_results)} 个 Domain）...")
+            logger.info(f"Generating multi-domain comparison visualization for {len(all_domain_results)} domains...")
             try:
-                # 取前 5 个 domain 进行对比
+                # Use the first 5 domains for comparison
                 sample_domains = all_domain_results[:5]
                 map_obj = visualize_domain_comparison(
                     all_results=sample_domains,
@@ -844,13 +846,17 @@ def main():
                     pred_len=pred_len
                 )
                 if map_obj is not None:
-                    logger.info(f"✅ Domain 对比可视化地图已生成")
+                    logger.info("Domain comparison visualization map generated")
             except Exception as e:
-                logger.error(f"❌ Domain 对比可视化生成出错: {e}")
+                logger.error(f"Domain comparison visualization failed: {e}")
         
-        logger.info("可视化生成完毕！")
+        logger.info("Visualization generation completed.")
 if __name__ == '__main__':
     try:
         main()
     except:
         logger.exception('Exception')
+
+
+
+
